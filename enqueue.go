@@ -8,10 +8,15 @@ import (
 )
 
 // Enqueuer can enqueue jobs.
+// Enqueuer 是放置任务的队列
 type Enqueuer struct {
-	Namespace string // eg, "myapp-work"
-	Pool      *redis.Pool
+	// eg, "myapp-work"
+	// TODO ? 任务队列的 namespace
+	Namespace string
+	// 持有的 redis 连接池
+	Pool *redis.Pool
 
+	// TODO ? 队列的 key-prefix
 	queuePrefix           string // eg, "myapp-work:jobs:"
 	knownJobs             map[string]int64
 	enqueueUniqueScript   *redis.Script
@@ -37,6 +42,7 @@ func NewEnqueuer(namespace string, pool *redis.Pool) *Enqueuer {
 
 // Enqueue will enqueue the specified job name and arguments. The args param can be nil if no args ar needed.
 // Example: e.Enqueue("send_email", work.Q{"addr": "test@example.com"})
+// 入队
 func (e *Enqueuer) Enqueue(jobName string, args map[string]interface{}) (*Job, error) {
 	job := &Job{
 		Name:       jobName,
@@ -53,10 +59,12 @@ func (e *Enqueuer) Enqueue(jobName string, args map[string]interface{}) (*Job, e
 	conn := e.Pool.Get()
 	defer conn.Close()
 
+	// 每一个 job_name 维护一个 redis 执行队列
 	if _, err := conn.Do("LPUSH", e.queuePrefix+jobName, rawJSON); err != nil {
 		return nil, err
 	}
 
+	// TODO
 	if err := e.addToKnownJobs(conn, jobName); err != nil {
 		return job, err
 	}
@@ -65,6 +73,7 @@ func (e *Enqueuer) Enqueue(jobName string, args map[string]interface{}) (*Job, e
 }
 
 // EnqueueIn enqueues a job in the scheduled job queue for execution in secondsFromNow seconds.
+// 加入调度队列，任务会过 secondsFromNow 被执行
 func (e *Enqueuer) EnqueueIn(jobName string, secondsFromNow int64, args map[string]interface{}) (*ScheduledJob, error) {
 	job := &Job{
 		Name:       jobName,
@@ -82,6 +91,7 @@ func (e *Enqueuer) EnqueueIn(jobName string, secondsFromNow int64, args map[stri
 	defer conn.Close()
 
 	scheduledJob := &ScheduledJob{
+		// 具体的执行时间
 		RunAt: nowEpochSeconds() + secondsFromNow,
 		Job:   job,
 	}
@@ -104,6 +114,10 @@ func (e *Enqueuer) EnqueueIn(jobName string, secondsFromNow int64, args map[stri
 // Any failed jobs in the retry queue or dead queue don't count against the uniqueness -- so if a job fails and is retried, two unique jobs with the same name and arguments can be enqueued at once.
 // In order to add robustness to the system, jobs are only unique for 24 hours after they're enqueued. This is mostly relevant for scheduled jobs.
 // EnqueueUnique returns the job if it was enqueued and nil if it wasn't
+// 1.如果没有一个相同 job_name 和 相同任务参数的 job 被加入过，就入队
+// 2.已经入队的 job 可以在普通队列中或者在延时队列中
+// 3.如果一个 worker 已经开始处理一个 job，那么具有相同 name 和 args 的 job 可以入队
+// 4.
 func (e *Enqueuer) EnqueueUnique(jobName string, args map[string]interface{}) (*Job, error) {
 	return e.EnqueueUniqueByKey(jobName, args, nil)
 }
@@ -153,20 +167,26 @@ func (e *Enqueuer) EnqueueUniqueInByKey(jobName string, secondsFromNow int64, ar
 	return nil, err
 }
 
+// TODO 目的？
 func (e *Enqueuer) addToKnownJobs(conn redis.Conn, jobName string) error {
+	// 需要添加到 redis set 中
 	needSadd := true
 	now := time.Now().Unix()
 
 	e.mtx.RLock()
+	// 穿透读 knownJobs
+	// 维护所有已知的任务队列
 	t, ok := e.knownJobs[jobName]
 	e.mtx.RUnlock()
 
 	if ok {
+		// TODO ?
 		if now < t {
 			needSadd = false
 		}
 	}
 	if needSadd {
+		// 如果 job 的 time 小于当前，假如 redis set
 		if _, err := conn.Do("SADD", redisKeyKnownJobs(e.Namespace), jobName); err != nil {
 			return err
 		}

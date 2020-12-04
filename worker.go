@@ -81,7 +81,7 @@ func (w *worker) updateMiddlewareAndJobTypes(middleware []*middlewareHandler, jo
 }
 
 func (w *worker) start() {
-	go w.loop()
+	go w.loop() // worker 启动
 	go w.observer.start()
 }
 
@@ -102,6 +102,7 @@ var sleepBackoffsInMilliseconds = []int64{0, 10, 100, 1000, 5000}
 
 func (w *worker) loop() {
 	var drained bool
+	// 连续的没有 job
 	var consequtiveNoJobs int64
 
 	// Begin immediately. We'll change the duration on each tick with a timer.Reset()
@@ -114,9 +115,11 @@ func (w *worker) loop() {
 			w.doneStoppingChan <- struct{}{}
 			return
 		case <-w.drainChan:
+			// 立即触发
 			drained = true
 			timer.Reset(0)
 		case <-timer.C:
+			// 获取 job
 			job, err := w.fetchJob()
 			if err != nil {
 				logError("worker.fetch", err)
@@ -155,6 +158,8 @@ func (w *worker) fetchJob() (*Job, error) {
 	conn := w.pool.Get()
 	defer conn.Close()
 
+	// res = redis.call('rpoplpush', jobQueue, inProgQueue)
+	// 从 job queue 中 pop job，push 到 in progress 的 queue 中
 	values, err := redis.Values(w.redisFetchScript.Do(conn, scriptArgs...))
 	if err == redis.ErrNil {
 		return nil, nil
@@ -311,6 +316,7 @@ func (w *worker) jobFate(jt *jobType, job *Job) terminateOp {
 	if jt != nil {
 		failsRemaining := int64(jt.MaxFails) - job.Fails
 		if failsRemaining > 0 {
+			// 如果还没有达到最大的重试次数，放到 retry 队列中
 			return terminateAndRetry(w, jt, job)
 		}
 		if jt.SkipDead {

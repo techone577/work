@@ -109,6 +109,7 @@ func NewWorkerPoolWithOptions(ctx interface{}, concurrency uint, namespace strin
 	}
 
 	for i := uint(0); i < wp.concurrency; i++ {
+		// 根据设置的 concurrency 初始化 workers
 		w := newWorker(wp.namespace, wp.workerPoolID, wp.pool, wp.contextType, nil, wp.jobTypes, wp.sleepBackoffs)
 		wp.workers = append(wp.workers, w)
 	}

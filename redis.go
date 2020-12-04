@@ -349,6 +349,8 @@ return requeuedCount
 // KEYS[2] = Unique job's key. Test for existence and set if we push.
 // ARGV[1] = job
 // ARGV[2] = updated job or just a 1 if arguments don't update
+// 如果 unique key 不存在，入队
+// 如果 unique key 存在，就更新 job 或者不更新 job
 var redisLuaEnqueueUnique = `
 if redis.call('set', KEYS[2], ARGV[2], 'NX', 'EX', '86400') then
   redis.call('lpush', KEYS[1], ARGV[1])
@@ -364,6 +366,7 @@ return 'dup'
 // ARGV[1] = job
 // ARGV[2] = updated job or just a 1 if arguments don't update
 // ARGV[3] = epoch seconds for job to be run at
+// 如果 unique key 存在，就更新 job 或者不更新 job
 var redisLuaEnqueueUniqueIn = `
 if redis.call('set', KEYS[2], ARGV[2], 'NX', 'EX', '86400') then
   redis.call('zadd', KEYS[1], ARGV[3], ARGV[1])
